@@ -18,12 +18,14 @@ import json
 from collections import defaultdict
 import re
 import pandas as pd
+from pandas import DataFrame
 import threading, time
 from pymongo import MongoClient
+import sqlite3
 
 # the stuff that only needs to be run one time
 
-print(time.ctime())
+print(time.ctime()) # prints the start time of the code
 
 base_url = 'https://materialsproject.org/rest/v2/'
 API_KEY = "sAoUav0smg5jJWDWkbEH"
@@ -41,6 +43,7 @@ if not data['api_key_valid']:
     raise ValueError('You are not authenticated')
 
 def get_materials(elements):
+    '''gets the materials for the elements'''
     elements_str = '-'.join(elements)
     response = session.get(f'{base_url}/materials/{elements_str}/mids')
     data = response.json()
@@ -62,12 +65,12 @@ def get_material_vasp_properties(mid, piezoelectric = False, dielelectric = Fals
     response = session.get(f'{base_url}/materials/{mid}/vasp/')
     material_data = response.json()['response']
     print(response.json()['response'])
-    if material_data == []:
+    if material_data == []: # checks to see if any data exists for the material data
         print("No data exists for material id: " + str(mid))
     else:
         material_data = response.json()['response'][0]
         
-        if piezoelectric:
+        if piezoelectric: # some important property
             response = session.get(f'{base_url}/materials/{mid}/vasp/piezo')
             data = response.json()
             if not data['valid_response']:
@@ -75,7 +78,7 @@ def get_material_vasp_properties(mid, piezoelectric = False, dielelectric = Fals
             else:
                 material_data['piezoelectric'] = data['response']
             
-        if dielelectric:
+        if dielelectric: # another important property
             response = session.get(f'{base_url}/materials/{mid}/vasp/diel')
             data = response.json()
             if not data['valid_response']:
@@ -95,8 +98,8 @@ def change_materials_pulled(count):
     material_list = []
     materials = 'mp-'
     
-    total_count = count + 499
-    while count <= total_count: # pulls 500 materials
+    total_count = count + 2999
+    while count <= total_count: # pulls 3000 materials
         materials = materials + str(count)
         material_list.append(materials)
         materials = 'mp-'
@@ -112,7 +115,8 @@ def change_materials_pulled(count):
     
     print(material_list)
 
-    filename = '{}.json'.format('mp-' + str(count-500) + '_mp-' + str(total_count)) 
+    # formats the file all nice n pretty
+    filename = '{}.json'.format('mp-' + str(count-3000) + '_mp-' + str(total_count)) 
     print(filename)
     try: # checks to see if the file is created
         f = open(filename)                                                                                                                                                               
@@ -182,7 +186,7 @@ def change_materials_pulled(count):
     # number of materials we're looking at
     len(df)
     
-def add_to_mongo(count):
+def add_to_mongo_and_sqlite(count):
     '''locates the json file and adds it to the Materials_Project database'''
     client = MongoClient('localhost', 27017)
     db = client['Materials_Project']
@@ -203,16 +207,32 @@ def add_to_mongo(count):
     client.close()
     print(client.list_database_names())
     print(db.list_collection_names())
+    
+    tablename = '{}'.format('mp-' + str(count) + '_mp-' + str(total_count))
 
-wait_time_seconds = 86400 # waits 24 hours
+    conn = sqlite3.connect('customers.db')  # You can create a new database by changing the name within the quotes
+    c = conn.cursor() # The database will be saved in the location where your 'py' file is saved
+    
+    c.execute("CREATE TABLE '{table}' (material_id, energy, volume, nsites, energy_per_atom, pretty_formula, spacegroup, band_gap, density,\
+                                      total_magnetization, poisson_ratio, bulk_modulus_voigt, bulk_modulus_reuss, bulk_modulus_vrh,\
+                                      shear_modulus_voigt, shear_modulus_vrh)".format(table=tablename)) # use your column names here
+    conn.commit()
+    
+    read_mp = pd.read_csv("/Users/borodnm1/Desktop/'{file}'".format(file=filename))
+    read_mp.to_sql(tablename, conn, if_exists='append', index = False) # Insert the values from the csv file into the table 'mp-1-data' 
+    
+    conn.commit()
+    conn.close()
 
-count = 501 # the count from last time, initalize
+wait_time_seconds = 600 # waits 24 hours
+
+count = 100 # the count from last time, initalize
 
 ticker = threading.Event()
 while not ticker.wait(wait_time_seconds):
     print("starting the program")
     print(count)
     change_materials_pulled(count)
-    add_to_mongo(count)
+    add_to_mongo_and_sqlite(count)
     print("ran the program")
-    count += 500
+    count += 3000
