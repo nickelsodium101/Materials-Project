@@ -53,12 +53,11 @@ def get_materials(elements):
 def get_material_experimental_properties(mid):
     response = session.get(f'{base_url}/materials/{mid}/exp/')
     print(response.content)
-    data = response.json()['response'][0] # this is the line I have a question about
-    if data == []:
+    data = response.json()['response'][0]
+    if data == []: # checks to see if data exists
         print("no data exists for that element")
     else:
-        #print(data)
-        print("data exists")
+        print(data)
         return data
 
 def get_material_vasp_properties(mid, piezoelectric = False, dielelectric = False):
@@ -95,6 +94,8 @@ def change_materials_pulled(count):
     by 100'''
  
     # generates list of materials needed to pull
+    # this list is composed of material ids rather than elements
+    # this allows us to iterate through appropriately
     material_list = []
     materials = 'mp-'
     
@@ -113,7 +114,7 @@ def change_materials_pulled(count):
         materials_data[mid] = get_material_vasp_properties(mid) # calculate the properties and add them to the dict
         print("The length of materials data is: " + str(len(materials_data))) # prints len of the dict
     
-    print(material_list)
+    print(material_list) # prints out the material list to verify the ids
 
     # formats the file all nice n pretty
     filename = '{}.json'.format('mp-' + str(count-3000) + '_mp-' + str(total_count)) 
@@ -126,7 +127,6 @@ def change_materials_pulled(count):
         with open(filename, 'w') as write_file:
             json.dump(materials_data, write_file)
 
-    '''creates a function for daily running purposes'''
     def convert_dict_to_pandas_frame(data, dict_frames):
         ''' allows the dict to be converted so that we can actually read the data'''
         data_columns = defaultdict(list)
@@ -178,7 +178,7 @@ def change_materials_pulled(count):
     
     df = convert_dict_to_pandas_frame(data, key_map)
     df.info()
-    df.sample(5)
+    #df.sample(5)
     # write the data to a csv file
     filename = '{}.csv'.format('mp-' + str(count-500) + '_mp-' + str(total_count)) 
     df.to_csv('{}.csv'.format(filename))
@@ -188,51 +188,56 @@ def change_materials_pulled(count):
     
 def add_to_mongo_and_sqlite(count):
     '''locates the json file and adds it to the Materials_Project database'''
-    client = MongoClient('localhost', 27017)
-    db = client['Materials_Project']
     
-    total_count = count + 499
+    # adds the data to MongoDB
+    client = MongoClient('localhost', 27017)
+    db = client['Materials_Project'] # name of database
+    
+    total_count = count + 499 # for formatting purposes
 
     filename = '{}.json'.format('mp-' + str(count) + '_mp-' + str(total_count))
     collection_name = '{}'.format('mp-' + str(count) + '_mp-' + str(total_count))
     
-    collection = db[collection_name]
+    collection = db[collection_name] # creates a collection for the pulled data
     
     with open(filename) as f:
         file_data = json.load(f)
 
-    # use collection_currency.insert(file_data) if pymongo version < 3.0
+    # adds the json file to the mongo database
     collection.insert_one(file_data)
 
-    client.close()
-    print(client.list_database_names())
-    print(db.list_collection_names())
+    client.close() # need to close the database once we're done with it
+    #print(client.list_database_names()) 
+    print(db.list_collection_names()) # checks to see that the data was added
     
+    # adds the data to SQLite
     tablename = '{}'.format('mp-' + str(count) + '_mp-' + str(total_count))
 
-    conn = sqlite3.connect('customers.db')  # You can create a new database by changing the name within the quotes
+    conn = sqlite3.connect('Materials_Project_Data.db')  # connects to the Materials Project database
     c = conn.cursor() # The database will be saved in the location where your 'py' file is saved
     
+    # creates the table name for the file
     c.execute("CREATE TABLE '{table}' (material_id, energy, volume, nsites, energy_per_atom, pretty_formula, spacegroup, band_gap, density,\
                                       total_magnetization, poisson_ratio, bulk_modulus_voigt, bulk_modulus_reuss, bulk_modulus_vrh,\
                                       shear_modulus_voigt, shear_modulus_vrh)".format(table=tablename)) # use your column names here
-    conn.commit()
+    conn.commit() # saves this
     
-    read_mp = pd.read_csv("/Users/borodnm1/Desktop/'{file}'".format(file=filename))
-    read_mp.to_sql(tablename, conn, if_exists='append', index = False) # Insert the values from the csv file into the table 'mp-1-data' 
+    read_mp = pd.read_csv("/Users/borodnm1/Desktop/'{file}'".format(file=filename)) # access the csv file
+    read_mp.to_sql(tablename, conn, if_exists='append', index = False) # Insert the values from the csv file into the created table
     
-    conn.commit()
+    conn.commit() # also saves this
     conn.close()
 
-wait_time_seconds = 600 # waits 24 hours
+wait_time_seconds = 900 # waits 24 hours
 
-count = 100 # the count from last time, initalize
+count = 1001 # the count from last time, initalize
 
+# this allows the code to be run every day
 ticker = threading.Event()
 while not ticker.wait(wait_time_seconds):
     print("starting the program")
-    print(count)
-    change_materials_pulled(count)
-    add_to_mongo_and_sqlite(count)
-    print("ran the program")
-    count += 3000
+    print("Starting with material id: mp-"+ str(count))
+    change_materials_pulled(count) # pulls new materials
+    add_to_mongo_and_sqlite(count) # adds them to the database
+    print("ran the program") 
+    count += 3000 # increases the count for the next pull
