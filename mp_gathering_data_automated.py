@@ -11,6 +11,10 @@ Created on Mon Jul  8 10:27:40 2019
 
 @author: borodnm1
 """
+
+# interesting thing to note
+# this code takes a little over 10 minutes to fully execute
+
 import requests
 import numpy as np
 import os.path
@@ -18,14 +22,22 @@ import json
 from collections import defaultdict
 import re
 import pandas as pd
-from pandas import DataFrame
 import threading, time
 from pymongo import MongoClient
-import sqlite3
+from selenium import webdriver 
+from selenium.webdriver.support.ui import WebDriverWait 
+from selenium.webdriver.support import expected_conditions as EC 
+from selenium.webdriver.common.keys import Keys 
+from selenium.webdriver.common.by import By 
+import time 
 
 # the stuff that only needs to be run one time
 
 print(time.ctime()) # prints the start time of the code
+
+# this is used for texting myself
+driver = webdriver.Chrome('/Users/borodnm1/Desktop/chromedriver') 
+driver.get("https://web.whatsapp.com/")
 
 base_url = 'https://materialsproject.org/rest/v2/'
 API_KEY = "sAoUav0smg5jJWDWkbEH"
@@ -180,7 +192,7 @@ def change_materials_pulled(count):
     df.info()
     #df.sample(5)
     # write the data to a csv file
-    filename = '{}.csv'.format('mp-' + str(count-500) + '_mp-' + str(total_count)) 
+    filename = '{}.csv'.format('mp-' + str(count-3000) + '_mp-' + str(total_count)) 
     df.to_csv('{}.csv'.format(filename))
     
     # number of materials we're looking at
@@ -193,7 +205,7 @@ def add_to_mongo_and_sqlite(count):
     client = MongoClient('localhost', 27017)
     db = client['Materials_Project'] # name of database
     
-    total_count = count + 499 # for formatting purposes
+    total_count = count + 2999 # for formatting purposes
 
     filename = '{}.json'.format('mp-' + str(count) + '_mp-' + str(total_count))
     collection_name = '{}'.format('mp-' + str(count) + '_mp-' + str(total_count))
@@ -211,33 +223,64 @@ def add_to_mongo_and_sqlite(count):
     print(db.list_collection_names()) # checks to see that the data was added
     
     # adds the data to SQLite
-    tablename = '{}'.format('mp-' + str(count) + '_mp-' + str(total_count))
+    import sqlite3
 
-    conn = sqlite3.connect('Materials_Project_Data.db')  # connects to the Materials Project database
+    tablename = '{}'.format('mp-' + str(count) + '_mp-' + str(total_count))
+    filename = '{}.csv'.format('mp-' + str(count) + '_mp-' + str(total_count))
+    conn = sqlite3.connect('Materials_Project_Data.db')  # You can create a new database by changing the name within the quotes
     c = conn.cursor() # The database will be saved in the location where your 'py' file is saved
     
-    # creates the table name for the file
     c.execute("CREATE TABLE '{table}' (material_id, energy, volume, nsites, energy_per_atom, pretty_formula, spacegroup, band_gap, density,\
                                       total_magnetization, poisson_ratio, bulk_modulus_voigt, bulk_modulus_reuss, bulk_modulus_vrh,\
                                       shear_modulus_voigt, shear_modulus_vrh)".format(table=tablename)) # use your column names here
-    conn.commit() # saves this
+    conn.commit()
     
-    read_mp = pd.read_csv("/Users/borodnm1/Desktop/'{file}'".format(file=filename)) # access the csv file
-    read_mp.to_sql(tablename, conn, if_exists='append', index = False) # Insert the values from the csv file into the created table
+    import pandas as pd
+    from pandas import DataFrame
     
-    conn.commit() # also saves this
-    conn.close()
+    read_mp = pd.read_csv("/Users/borodnm1/Desktop/{file}.csv".format(file=filename))
+    read_mp.to_sql(tablename, conn, if_exists='append', index = False) # Insert the values from the csv file into the table 'mp-1-data' 
+    
+    conn.commit()
+    #conn.close()
 
-wait_time_seconds = 900 # waits 24 hours
+def send_text_summary(count):
+    '''sends text to me so that I can confirm that
+    the data was pulled successfully'''
+    
+    total_count = count + 2999 # for formatting purposes
+    filename = '{}.json'.format('mp-' + str(count) + '_mp-' + str(total_count))
+    
+    wait = WebDriverWait(driver, 600)
+    target = '"Group"'
+    x_arg = '//span[contains(@title,' + target + ')]'
+    group_title = wait.until(EC.presence_of_element_located((By.XPATH, x_arg)))
+    print(group_title)
+    print("after wait")
+    group_title.click()
+    inp = "//div[@contenteditable='true']"
+    inp_xpath = '//div[@class="input"][@dir="auto"][@data-tab="1"]'
+    input_box = wait.until(EC.presence_of_element_located((By.XPATH, inp)))
+    print(input_box)
+    input_box.send_keys(filename + Keys.ENTER)
+    input_box.send_keys("Pulling data was successful" + Keys.ENTER)
 
-count = 1001 # the count from last time, initalize
+wait_time_seconds = 900 #108000 # waits 30 hours
+
+count = 28001 # the count from last time, initalize
 
 # this allows the code to be run every day
 ticker = threading.Event()
 while not ticker.wait(wait_time_seconds):
-    print("starting the program")
+    print("Starting the program")
     print("Starting with material id: mp-"+ str(count))
     change_materials_pulled(count) # pulls new materials
     add_to_mongo_and_sqlite(count) # adds them to the database
-    print("ran the program") 
+    send_text_summary(count) # sends text to myself so that I can check if pulling data was successful
+    print("Ran the program")
+    mytime = time.time()
+    time.localtime(mytime)
+    newtime = mytime + 108000
+    print("Finished the program at " + str(time.ctime()))
+    print("Next run time is " + str(time.localtime(newtime)))
     count += 3000 # increases the count for the next pull
